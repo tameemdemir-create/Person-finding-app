@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>كاميرا الهاتف</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 18px;
+            background: #0f172a;
+            color: #f8fafc;
+            font-family: Arial, sans-serif;
+        }
+        main { max-width: 720px; margin: auto; }
+        section {
+            margin-top: 16px;
+            padding: 16px;
+            border-radius: 14px;
+            background: #1e293b;
+        }
+        video {
+            display: block;
+            width: 100%;
+            max-height: 70vh;
+            background: #020617;
+            border-radius: 12px;
+        }
+        button {
+            width: 100%;
+            margin-top: 12px;
+            padding: 13px;
+            border: 0;
+            border-radius: 10px;
+            color: white;
+            background: #16a34a;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        button:disabled { opacity: .6; }
+        #status {
+            color: #cbd5e1;
+            line-height: 1.7;
+            overflow-wrap: anywhere;
+        }
+        #status.error { color: #fca5a5; }
+        #status.ready { color: #86efac; }
+    </style>
+</head>
+<body>
+<main>
+    <h2>كاميرا الهاتف</h2>
+    <p>افتح هذه الصفحة على الهاتف واضغط بدء البث. سيظهر الفيديو في تطبيق اللابتوب.</p>
+    <section>
+        <video id="camera" autoplay playsinline muted></video>
+        <button id="toggle">بدء البث</button>
+        <p id="status" role="status" aria-live="polite">جاري فحص صلاحية الكاميرا...</p>
+    </section>
+</main>
+<script>
+    const video = document.getElementById("camera");
+    const button = document.getElementById("toggle");
+    const status = document.getElementById("status");
+    let stream = null;
+    let timer = null;
+    let sending = false;
+
+    function showStatus(message, kind = "") {
+        status.textContent = message;
+        status.className = kind;
+    }
+
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+        button.disabled = true;
+        showStatus(
+            "المتصفح يمنع تشغيل الكاميرا لأن الاتصال الآمن غير موثوق. افتح رابط https على الهاتف، وتأكد من قبول تحذير الشهادة. إذا استمر هذا التنبيه، يلزم شهادة HTTPS موثوقة للهاتف.",
+            "error"
+        );
+    } else {
+        showStatus("جاهز. اضغط «بدء البث» واسمح للمتصفح باستخدام الكاميرا.", "ready");
+    }
+
+    async function sendFrame() {
+        if (!stream || sending || video.videoWidth === 0) return;
+        sending = true;
+        try {
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.min(video.videoWidth, 960);
+            canvas.height = Math.round(video.videoHeight * canvas.width / video.videoWidth);
+            canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+            const frame = canvas.toDataURL("image/jpeg", 0.7);
+            const response = await fetch("/upload", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ frame })
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || "فشل إرسال الصورة.");
+            showStatus(`البث يعمل. الأشخاص المكتشفة: ${result.person_count}`, "ready");
+        } catch (error) {
+            showStatus(`تعذر إرسال البث إلى اللابتوب: ${error.message}`, "error");
+        } finally {
+            sending = false;
+        }
+    }
+
+    button.addEventListener("click", async () => {
+        if (stream) {
+            clearInterval(timer);
+            stream.getTracks().forEach(track => track.stop());
+            stream = null;
+            video.srcObject = null;
+            button.textContent = "بدء البث";
+            showStatus("البث متوقف.", "");
+            return;
+        }
+
+        button.disabled = true;
+        showStatus("جارٍ طلب إذن الكاميرا من المتصفح...", "");
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: { ideal: "environment" } },
+                audio: false
+            });
+            video.srcObject = stream;
+            await video.play();
+            button.textContent = "إيقاف البث";
+            showStatus("تم فتح الكاميرا. جارٍ إرسال الفيديو إلى اللابتوب...", "ready");
+            timer = setInterval(sendFrame, 400);
+        } catch (error) {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+            const reasons = {
+                NotAllowedError: "ارفض المتصفح إذن الكاميرا؛ اضغط رمز القفل بجانب العنوان واسمح بالكاميرا.",
+                NotFoundError: "لم يتم العثور على كاميرا في الهاتف.",
+                NotReadableError: "الكاميرا مستخدمة من تطبيق آخر. أغلق التطبيق الآخر وحاول مجددًا.",
+                SecurityError: "المتصفح منع الكاميرا بسبب شهادة HTTPS أو إعدادات الأمان.",
+                TypeError: "رابط الموقع غير آمن أو أن المتصفح لا يدعم الوصول للكاميرا."
+            };
+            const message = reasons[error.name] || `تعذر فتح الكاميرا (${error.name}): ${error.message}`;
+            showStatus(message, "error");
+            button.textContent = "إعادة المحاولة";
+        } finally {
+            button.disabled = false;
+        }
+    });
+</script>
+</body>
+</html>
