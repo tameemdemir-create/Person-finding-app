@@ -1,5 +1,6 @@
 import base64
 import binascii
+import os
 import threading
 from pathlib import Path
 
@@ -23,10 +24,8 @@ STATE = {
     "frame_id": 0,
     "people": [],
     "criteria": {
-        "color": "",
-        "clothing_type": "",
-        "fabric": "",
-        "pixels_per_cm": None,
+        "shirt_color": "",
+        "pants_color": "",
     },
 }
 
@@ -43,6 +42,18 @@ COLOR_NAMES_AR = {
     "unknown": "غير معروف",
 }
 ALLOWED_COLORS = set(COLOR_NAMES_AR) - {"unknown"}
+FRONTEND_ORIGIN = os.environ.get("FRONTEND_ORIGIN", "").rstrip("/")
+
+
+@app.after_request
+def add_frontend_cors_headers(response):
+    origin = request.headers.get("Origin", "").rstrip("/")
+    if origin and origin == FRONTEND_ORIGIN:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Vary"] = "Origin"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
 
 
 def detect_color(bgr_roi):
@@ -89,21 +100,28 @@ def get_people(frame, criteria):
     people = []
     for box in boxes:
         x, y, width, height = (int(value) for value in box)
-        top = max(0, y + int(height * 0.2))
-        bottom = min(frame.shape[0], y + int(height * 0.72))
         left = max(0, x + int(width * 0.18))
         right = min(frame.shape[1], x + int(width * 0.82))
-        color = detect_color(frame[top:bottom, left:right])
-        match = not criteria["color"] or color == criteria["color"]
-        scale = criteria["pixels_per_cm"]
-        height_cm = round(height / scale, 1) if scale else None
+        shirt_top = max(0, y + int(height * 0.24))
+        shirt_bottom = min(frame.shape[0], y + int(height * 0.48))
+        pants_top = max(0, y + int(height * 0.6))
+        pants_bottom = min(frame.shape[0], y + int(height * 0.88))
+        shirt_color = detect_color(frame[shirt_top:shirt_bottom, left:right])
+        pants_color = detect_color(frame[pants_top:pants_bottom, left:right])
+        shirt_matches = (
+            not criteria["shirt_color"] or shirt_color == criteria["shirt_color"]
+        )
+        pants_matches = (
+            not criteria["pants_color"] or pants_color == criteria["pants_color"]
+        )
         people.append({
             "bbox": [x, y, width, height],
             "height_px": height,
-            "height_cm": height_cm,
-            "color": color,
-            "color_ar": COLOR_NAMES_AR.get(color, "غير معروف"),
-            "matches": match,
+            "shirt_color": shirt_color,
+            "shirt_color_ar": COLOR_NAMES_AR.get(shirt_color, "غير معروف"),
+            "pants_color": pants_color,
+            "pants_color_ar": COLOR_NAMES_AR.get(pants_color, "غير معروف"),
+            "matches": shirt_matches and pants_matches,
         })
 
     return people
@@ -117,10 +135,9 @@ def process_frame(frame):
         x, y, width, height = person["bbox"]
         color = (0, 220, 0) if person["matches"] else (0, 120, 255)
         cv2.rectangle(frame, (x, y), (x + width, y + height), color, 3)
-        height_text = "{} px".format(person["height_px"])
-        if person["height_cm"] is not None:
-            height_text = "{:.1f} cm".format(person["height_cm"])
-        label = "{} | {}".format(person["color"], height_text)
+        label = "{} / {} | {} px".format(
+            person["shirt_color"], person["pants_color"], person["height_px"]
+        )
         cv2.putText(
             frame, label, (x, max(24, y - 10)), cv2.FONT_HERSHEY_SIMPLEX,
             0.65, color, 2, cv2.LINE_AA
@@ -208,33 +225,25 @@ def update_criteria():
     if not isinstance(payload, dict):
         return jsonify({"error": "Search criteria must be a JSON object."}), 400
 
-    color = payload.get("color", "")
-    if color not in ALLOWED_COLORS and color != "":
-        return jsonify({"error": "Unsupported clothing color."}), 400
-
-    scale = payload.get("pixels_per_cm")
-    if scale is not None:
-        try:
-            scale = float(scale)
-        except (TypeError, ValueError):
-            return jsonify({"error": "Calibration must be a number."}), 400
-        if not 0.1 <= scale <= 100:
-            return jsonify({"error": "Calibration must be between 0.1 and 100."}), 400
+    shirt_color = payload.get("shirt_color", "")
+    pants_color = payload.get("pants_color", "")
+    if shirt_color not in ALLOWED_COLORS and shirt_color != "":
+        return jsonify({"error": "Unsupported shirt color."}), 400
+    if pants_color not in ALLOWED_COLORS and pants_color != "":
+        return jsonify({"error": "Unsupported pants color."}), 400
 
     with STATE_LOCK:
         criteria = {
-            "color": color,
-            "clothing_type": str(payload.get("clothing_type", ""))[:100],
-            "fabric": str(payload.get("fabric", ""))[:100],
-            "pixels_per_cm": scale,
+            "shirt_color": shirt_color,
+            "pants_color": pants_color,
         }
         STATE["criteria"] = criteria
         people = []
         for existing_person in STATE["people"]:
             person = dict(existing_person)
-            person["matches"] = not color or person["color"] == color
-            person["height_cm"] = (
-                round(person["height_px"] / scale, 1) if scale else None
+            person["matches"] = (
+                (not shirt_color or person["shirt_color"] == shirt_color)
+                and (not pants_color or person["pants_color"] == pants_color)
             )
             people.append(person)
         STATE["people"] = people

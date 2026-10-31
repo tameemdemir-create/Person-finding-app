@@ -39,6 +39,16 @@
             font-weight: bold;
         }
         button:disabled { opacity: .6; }
+        input {
+            width: 100%;
+            margin-top: 8px;
+            padding: 12px;
+            border: 1px solid #475569;
+            border-radius: 10px;
+            background: #0f172a;
+            color: white;
+            font-size: 15px;
+        }
         #status {
             color: #cbd5e1;
             line-height: 1.7;
@@ -53,6 +63,9 @@
     <h2>كاميرا الهاتف</h2>
     <p>افتح هذه الصفحة على الهاتف واضغط بدء البث. سيظهر الفيديو في تطبيق اللابتوب.</p>
     <section>
+        <label for="serverUrl">رابط خادم Python المنشور (HTTPS)</label>
+        <input id="serverUrl" type="url" placeholder="https://your-service.onrender.com" autocomplete="url">
+        <button id="saveServer" type="button">حفظ رابط الخادم</button>
         <video id="camera" autoplay playsinline muted></video>
         <button id="toggle">بدء البث</button>
         <p id="status" role="status" aria-live="polite">جاري فحص صلاحية الكاميرا...</p>
@@ -62,6 +75,9 @@
     const video = document.getElementById("camera");
     const button = document.getElementById("toggle");
     const status = document.getElementById("status");
+    const serverInput = document.getElementById("serverUrl");
+    const saveServerButton = document.getElementById("saveServer");
+    const serverUrlKey = "cameraServerUrl";
     let stream = null;
     let timer = null;
     let sending = false;
@@ -70,6 +86,25 @@
         status.textContent = message;
         status.className = kind;
     }
+
+    serverInput.value = localStorage.getItem(serverUrlKey) || "";
+    saveServerButton.addEventListener("click", () => {
+        const value = serverInput.value.trim().replace(/\/+$/, "");
+        if (!value) {
+            localStorage.removeItem(serverUrlKey);
+            showStatus("أدخل رابط خادم Python المنشور على HTTPS أولًا.", "error");
+            return;
+        }
+        try {
+            const parsed = new URL(value);
+            if (parsed.protocol !== "https:") throw new Error("https");
+            localStorage.setItem(serverUrlKey, parsed.origin);
+            serverInput.value = parsed.origin;
+            showStatus("تم حفظ رابط الخادم. يمكنك بدء بث الكاميرا.", "ready");
+        } catch {
+            showStatus("الرابط غير صحيح. أدخل رابط HTTPS للخادم المنشور.", "error");
+        }
+    });
 
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
         button.disabled = true;
@@ -83,6 +118,11 @@
 
     async function sendFrame() {
         if (!stream || sending || video.videoWidth === 0) return;
+        const serverUrl = localStorage.getItem(serverUrlKey);
+        if (!serverUrl) {
+            showStatus("أدخل رابط خادم Python المنشور واحفظه أولًا.", "error");
+            return;
+        }
         sending = true;
         try {
             const canvas = document.createElement("canvas");
@@ -90,11 +130,15 @@
             canvas.height = Math.round(video.videoHeight * canvas.width / video.videoWidth);
             canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
             const frame = canvas.toDataURL("image/jpeg", 0.7);
-            const response = await fetch("/upload", {
+            const response = await fetch(`${serverUrl}/upload`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ frame })
             });
+            const contentType = response.headers.get("content-type") || "";
+            if (!contentType.includes("application/json")) {
+                throw new Error("الخادم لم يُرجع JSON. تحقق من رابط خادم Python.");
+            }
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || "فشل إرسال الصورة.");
             showStatus(`البث يعمل. الأشخاص المكتشفة: ${result.person_count}`, "ready");

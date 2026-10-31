@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import queue
 import socket
 import ssl
@@ -12,7 +13,7 @@ from tkinter import ttk
 
 from server import start_server
 
-SERVER_URL = "https://127.0.0.1:5000"
+SERVER_URL = os.environ.get("CAMERA_SERVER_URL", "https://127.0.0.1:5000").rstrip("/")
 HTTP_CONTEXT = ssl._create_unverified_context()
 COLORS = {
     "أي لون": "",
@@ -107,50 +108,43 @@ class LaptopApp:
             bg="#1e293b", fg="white"
         ).grid(row=0, column=0, sticky="e", pady=(0, 14))
 
-        self.color_var = tk.StringVar(value="أي لون")
-        self.type_var = tk.StringVar()
-        self.fabric_var = tk.StringVar()
-        self.scale_var = tk.StringVar()
-        self._add_field(controls, 1, "لون الملابس", ttk.Combobox(
-            controls, textvariable=self.color_var, values=list(COLORS),
+        self.shirt_color_var = tk.StringVar(value="أي لون")
+        self.pants_color_var = tk.StringVar(value="أي لون")
+        self._add_field(controls, 1, "لون البلوزة / القميص", ttk.Combobox(
+            controls, textvariable=self.shirt_color_var, values=list(COLORS),
             state="readonly", justify="right"
         ))
-        self._add_field(controls, 2, "نوع الملابس (وصف)", ttk.Entry(
-            controls, textvariable=self.type_var, justify="right"
-        ))
-        self._add_field(controls, 3, "القماش (وصف)", ttk.Entry(
-            controls, textvariable=self.fabric_var, justify="right"
-        ))
-        self._add_field(controls, 4, "بكسل لكل سم (اختياري)", ttk.Entry(
-            controls, textvariable=self.scale_var, justify="right"
+        self._add_field(controls, 2, "لون البنطلون / الشورت", ttk.Combobox(
+            controls, textvariable=self.pants_color_var, values=list(COLORS),
+            state="readonly", justify="right"
         ))
 
         self.search_button = ttk.Button(
             controls, text="ابدأ البحث بالمواصفات", command=self._search
         )
-        self.search_button.grid(row=9, column=0, sticky="ew", pady=(12, 8))
+        self.search_button.grid(row=5, column=0, sticky="ew", pady=(12, 8))
         self.result_label = tk.Label(
             controls, text="أدخل اللون ثم ابدأ البحث.", bg="#111827",
             fg="#e2e8f0", justify="right", anchor="ne", wraplength=320,
             padx=12, pady=12
         )
-        self.result_label.grid(row=10, column=0, sticky="nsew", pady=(4, 12))
-        controls.rowconfigure(10, weight=1)
+        self.result_label.grid(row=6, column=0, sticky="nsew", pady=(4, 12))
+        controls.rowconfigure(6, weight=1)
 
         address = "https://{}:5000".format(get_laptop_ip())
         tk.Label(
             controls, text="افتح هذا الرابط على الهاتف:\n" + address,
             bg="#1e293b", fg="#93c5fd", justify="right", wraplength=330
-        ).grid(row=11, column=0, sticky="ew")
+        ).grid(row=7, column=0, sticky="ew")
         ttk.Button(
             controls, text="نسخ رابط الهاتف",
             command=lambda: self._copy_address(address)
-        ).grid(row=12, column=0, sticky="ew", pady=(8, 0))
+        ).grid(row=8, column=0, sticky="ew", pady=(8, 0))
         tk.Label(
             controls,
-            text="يُطابق التطبيق اللون آليًا. نوع الملابس والقماش أوصاف لا يمكن تأكيدها بهذه النسخة. السنتيمتر يحتاج معايرة.",
+            text="التطبيق يحدد لون الجزء العلوي والسفلي تلقائيًا. الطول المعروض بالبكسل من الصورة؛ لا يمكن معرفة الطول الحقيقي بالسنتيمتر دون مرجع قياس.",
             bg="#1e293b", fg="#cbd5e1", justify="right", wraplength=330
-        ).grid(row=13, column=0, sticky="ew", pady=(14, 0))
+        ).grid(row=9, column=0, sticky="ew", pady=(14, 0))
 
     @staticmethod
     def _add_field(parent, row, label_text, widget):
@@ -166,22 +160,9 @@ class LaptopApp:
         self.status_label.config(text="تم نسخ الرابط. افتحه على الهاتف.")
 
     def _search(self):
-        try:
-            pixels_per_cm = self.scale_var.get().strip()
-            pixels_per_cm = float(pixels_per_cm) if pixels_per_cm else None
-            if pixels_per_cm is not None and not 0.1 <= pixels_per_cm <= 100:
-                raise ValueError
-        except ValueError:
-            self.result_label.config(
-                text="قيمة المعايرة غير صحيحة. أدخل قيمة بين 0.1 و100 أو اتركها فارغة."
-            )
-            return
-
         payload = {
-            "color": COLORS[self.color_var.get()],
-            "clothing_type": self.type_var.get().strip(),
-            "fabric": self.fabric_var.get().strip(),
-            "pixels_per_cm": pixels_per_cm,
+            "shirt_color": COLORS[self.shirt_color_var.get()],
+            "pants_color": COLORS[self.pants_color_var.get()],
         }
         self.search_button.config(state="disabled")
         threading.Thread(
@@ -248,19 +229,19 @@ class LaptopApp:
         elif matches:
             details = []
             for index, person in enumerate(matches, start=1):
-                height = "{} بكسل".format(person["height_px"])
-                if person["height_cm"] is not None:
-                    height += " / {:.1f} سم تقريبًا".format(person["height_cm"])
                 details.append(
-                    "الشخص {}: اللون {}، الارتفاع {}".format(
-                        index, person["color_ar"], height
+                    "الشخص {}: البلوزة {}، البنطلون {}، طول الصورة {} بكسل".format(
+                        index,
+                        person["shirt_color_ar"],
+                        person["pants_color_ar"],
+                        person["height_px"],
                     )
                 )
-            text = "تم العثور على {} شخص مطابق للون:\n".format(len(matches))
+            text = "تم العثور على {} شخص مطابق للمواصفات:\n".format(len(matches))
             text += "\n".join(details)
         else:
-            text = "تم اكتشاف أشخاص، لكن لون الملابس لا يطابق اللون المطلوب."
-        text += "\n\nملاحظة: نوع الملابس والقماش وصف يدوي، ولا يتم التحقق منهما بصريًا."
+            text = "تم اكتشاف أشخاص، لكن ألوان البلوزة والبنطلون لا تطابق المواصفات."
+        text += "\n\nالطول بالبكسل من الصورة، وليس بالسنتيمتر."
         self.result_label.config(text=text)
 
     def _close(self):
@@ -269,7 +250,8 @@ class LaptopApp:
 
 
 if __name__ == "__main__":
-    threading.Thread(target=start_server, daemon=True).start()
+    if SERVER_URL == "https://127.0.0.1:5000":
+        threading.Thread(target=start_server, daemon=True).start()
     root = tk.Tk()
     LaptopApp(root)
     root.mainloop()
