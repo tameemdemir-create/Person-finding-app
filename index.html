@@ -47,7 +47,7 @@
             border-radius: 10px;
             background: #0f172a;
             color: white;
-            font-size: 15px;
+            font-size: 15px;             direction: ltr;             text-align: left;
         }
         #status {
             color: #cbd5e1;
@@ -88,7 +88,7 @@
     }
 
     serverInput.value = localStorage.getItem(serverUrlKey) || "";
-    saveServerButton.addEventListener("click", () => {
+    saveServerButton.addEventListener("click", async () => {
         const value = serverInput.value.trim().replace(/\/+$/, "");
         if (!value) {
             localStorage.removeItem(serverUrlKey);
@@ -98,11 +98,11 @@
         try {
             const parsed = new URL(value);
             if (parsed.protocol !== "https:") throw new Error("https");
-            localStorage.setItem(serverUrlKey, parsed.origin);
+            showStatus("أتحقق من اتصال الخادم...", ""); const response = await fetch(`${parsed.origin}/api/status`, { cache: "no-store" }); if (!response.ok) throw new Error("رابط الخادم لا يعمل."); await response.json(); localStorage.setItem(serverUrlKey, parsed.origin);
             serverInput.value = parsed.origin;
             showStatus("تم حفظ رابط الخادم. يمكنك بدء بث الكاميرا.", "ready");
-        } catch {
-            showStatus("الرابط غير صحيح. أدخل رابط HTTPS للخادم المنشور.", "error");
+        } catch (error) {
+            showStatus(error.message === "Failed to fetch" ? "تعذر الوصول للخادم. تأكد من الرابط كاملًا واتصال الإنترنت." : error.message === "https" ? "الرابط غير صحيح. أدخل رابط HTTPS للخادم المنشور." : error.message, "error");
         }
     });
 
@@ -143,7 +143,7 @@
             if (!response.ok) throw new Error(result.error || "فشل إرسال الصورة.");
             showStatus(`البث يعمل. الأشخاص المكتشفة: ${result.person_count}`, "ready");
         } catch (error) {
-            showStatus(`تعذر إرسال البث إلى اللابتوب: ${error.message}`, "error");
+            showStatus(error.message === "Failed to fetch" ? "فشل الاتصال بالخادم. تحقق من رابط الخادم المحفوظ واتصال الإنترنت." : `تعذر إرسال البث إلى اللابتوب: ${error.message}`, "error");
         } finally {
             sending = false;
         }
