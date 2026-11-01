@@ -47,7 +47,9 @@
             border-radius: 10px;
             background: #0f172a;
             color: white;
-            font-size: 15px;             direction: ltr;             text-align: left;
+            font-size: 15px;
+            direction: ltr;
+            text-align: left;
         }
         #status {
             color: #cbd5e1;
@@ -88,6 +90,24 @@
     }
 
     serverInput.value = localStorage.getItem(serverUrlKey) || "";
+    async function checkServer(serverUrl) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 75000);
+        try {
+            const response = await fetch(`${serverUrl}/api/status`, {
+                cache: "no-store",
+                signal: controller.signal
+            });
+            const contentType = response.headers.get("content-type") || "";
+            if (!response.ok || !contentType.includes("application/json")) {
+                throw new Error("رابط الخادم لا يعمل. تأكد أنه رابط Render الصحيح.");
+            }
+            return await response.json();
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
     saveServerButton.addEventListener("click", async () => {
         const value = serverInput.value.trim().replace(/\/+$/, "");
         if (!value) {
@@ -98,11 +118,24 @@
         try {
             const parsed = new URL(value);
             if (parsed.protocol !== "https:") throw new Error("https");
-            showStatus("أتحقق من اتصال الخادم...", ""); const response = await fetch(`${parsed.origin}/api/status`, { cache: "no-store" }); if (!response.ok) throw new Error("رابط الخادم لا يعمل."); await response.json(); localStorage.setItem(serverUrlKey, parsed.origin);
+            saveServerButton.disabled = true;
+            showStatus("أتحقق من رابط الخادم وأوقظه إذا كان متوقفًا...", "");
+            const health = await checkServer(parsed.origin);
+            localStorage.setItem(serverUrlKey, parsed.origin);
             serverInput.value = parsed.origin;
-            showStatus("تم حفظ رابط الخادم. يمكنك بدء بث الكاميرا.", "ready");
+            showStatus(
+                `الخادم متصل. عدد الأشخاص الحالي: ${health.people_count}. الآن اضغط بدء البث.`,
+                "ready"
+            );
         } catch (error) {
-            showStatus(error.message === "Failed to fetch" ? "تعذر الوصول للخادم. تأكد من الرابط كاملًا واتصال الإنترنت." : error.message === "https" ? "الرابط غير صحيح. أدخل رابط HTTPS للخادم المنشور." : error.message, "error");
+            const message = error.name === "AbortError"
+                ? "تأخر الخادم في الاستجابة. أعد المحاولة بعد قليل."
+                : error.message === "Failed to fetch"
+                    ? "تعذر الوصول للخادم. تأكد من كتابة الرابط كاملًا مثل https://person-finding-app.onrender.com"
+                    : error.message || "تعذر التحقق من رابط الخادم.";
+            showStatus(message, "error");
+        } finally {
+            saveServerButton.disabled = false;
         }
     });
 
@@ -126,10 +159,10 @@
         sending = true;
         try {
             const canvas = document.createElement("canvas");
-            canvas.width = Math.min(video.videoWidth, 960);
+            canvas.width = Math.min(video.videoWidth, 640);
             canvas.height = Math.round(video.videoHeight * canvas.width / video.videoWidth);
             canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-            const frame = canvas.toDataURL("image/jpeg", 0.7);
+            const frame = canvas.toDataURL("image/jpeg", 0.55);
             const response = await fetch(`${serverUrl}/upload`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -141,9 +174,12 @@
             }
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || "فشل إرسال الصورة.");
-            showStatus(`البث يعمل. الأشخاص المكتشفة: ${result.person_count}`, "ready");
+            showStatus("البث يعمل. يتم تحليل أحدث صورة في التطبيق.", "ready");
         } catch (error) {
-            showStatus(error.message === "Failed to fetch" ? "فشل الاتصال بالخادم. تحقق من رابط الخادم المحفوظ واتصال الإنترنت." : `تعذر إرسال البث إلى اللابتوب: ${error.message}`, "error");
+            const message = error.message === "Failed to fetch"
+                ? "فشل الاتصال بالخادم. تحقق من رابط الخادم المحفوظ واتصال الإنترنت."
+                : `تعذر إرسال البث إلى اللابتوب: ${error.message}`;
+            showStatus(message, "error");
         } finally {
             sending = false;
         }
@@ -160,6 +196,11 @@
             return;
         }
 
+        if (!localStorage.getItem(serverUrlKey)) {
+            showStatus("أدخل رابط الخادم كاملًا ثم اضغط «حفظ رابط الخادم» أولًا.", "error");
+            return;
+        }
+
         button.disabled = true;
         showStatus("جارٍ طلب إذن الكاميرا من المتصفح...", "");
         try {
@@ -171,7 +212,7 @@
             await video.play();
             button.textContent = "إيقاف البث";
             showStatus("تم فتح الكاميرا. جارٍ إرسال الفيديو إلى اللابتوب...", "ready");
-            timer = setInterval(sendFrame, 400);
+            timer = setInterval(sendFrame, 250);
         } catch (error) {
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
