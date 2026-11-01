@@ -168,7 +168,7 @@ def detect_color(bgr_roi):
 
 
 def detect_people(frame):
-    boxes, _ = HOG.detectMultiScale(
+    boxes, weights = HOG.detectMultiScale(
         frame,
         hitThreshold=0,
         winStride=(8, 8),
@@ -178,9 +178,15 @@ def detect_people(frame):
     )
     people = []
     frame_height, frame_width = frame.shape[:2]
-    for box in boxes:
+    for box, weight in zip(boxes, weights):
         x, y, width, height = (int(value) for value in box)
-        if width < 40 or height < 90:
+        aspect_ratio = width / max(height, 1)
+        if (
+            float(weight) < 0.2
+            or width < 32
+            or height < 90
+            or not 0.2 <= aspect_ratio <= 0.9
+        ):
             continue
         x1 = max(0, x + int(width * 0.18))
         x2 = min(frame_width, x + int(width * 0.82))
@@ -311,13 +317,7 @@ def process_frame(source_frame, criteria):
         if person["matches"]:
             matches.append(person)
 
-    annotated = frame.copy()
-    for person in matches:
-        x, y, box_width, box_height = person["bbox"]
-        cv2.rectangle(
-            annotated, (x, y), (x + box_width, y + box_height), (0, 220, 0), 3
-        )
-
+    target = None
     if has_criteria and matches:
         if reference:
             target = min(matches, key=lambda person: person["appearance_distance"])
@@ -326,6 +326,19 @@ def process_frame(source_frame, criteria):
                 matches,
                 key=lambda person: person["bbox"][2] * person["bbox"][3],
             )
+
+    annotated = frame.copy()
+    for person in people:
+        x, y, box_width, box_height = person["bbox"]
+        cv2.rectangle(
+            annotated,
+            (x, y),
+            (x + box_width, y + box_height),
+            (0, 0, 255) if person is target else (40, 255, 90),
+            3,
+        )
+
+    if target is not None:
         x, y, box_width, box_height = target["bbox"]
         pad_x = max(12, int(box_width * 0.3))
         pad_y = max(12, int(box_height * 0.12))
