@@ -2,31 +2,24 @@ import base64
 import json
 import os
 import queue
-import socket
 import ssl
 import threading
 import time
 import urllib.error
 import urllib.request
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, ttk
 
+import cv2
+import numpy as np
 from server import start_server
 
-SERVER_URL = os.environ.get("CAMERA_SERVER_URL", "https://127.0.0.1:5000").rstrip("/")
+LOCAL_SERVER_URL = "https://127.0.0.1:5000"
+SERVER_URL = os.environ.get(
+    "CAMERA_SERVER_URL", "https://person-finding-app.onrender.com"
+).rstrip("/")
 HTTP_CONTEXT = ssl._create_unverified_context()
-COLORS = {
-    "أي لون": "",
-    "أسود": "black",
-    "أبيض": "white",
-    "أحمر": "red",
-    "برتقالي": "orange",
-    "أصفر": "yellow",
-    "أخضر": "green",
-    "أزرق": "blue",
-    "بنفسجي": "purple",
-    "رمادي": "gray",
-}
+PHONE_SITE_URL = "https://tameemdemir-create.github.io/Person-finding-app/"
 
 
 def api_request(path, payload=None):
@@ -42,25 +35,21 @@ def api_request(path, payload=None):
         return response.read()
 
 
-def get_laptop_ip():
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-            probe.connect(("192.0.2.1", 80))
-            return probe.getsockname()[0]
-    except OSError:
-        return "127.0.0.1"
-
-
 class LaptopApp:
     def __init__(self, root):
         self.root = root
         self.root.title("تطبيق البحث عن الشخص")
-        self.root.geometry("1100x720")
-        self.root.minsize(850, 600)
+        self.root.geometry("1150x760")
+        self.root.minsize(900, 650)
         self.root.configure(bg="#0f172a")
         self.updates = queue.Queue()
         self.closed = False
-        self.last_frame_id = None
+        self.last_frame_id = 0
+        self.displayed_frame_id = 0
+        self.latest_live_update = None
+        self.live_update_lock = threading.Lock()
+        self.reference_image_path = None
+        self.search_active = False
 
         self._build_ui()
         threading.Thread(target=self._poll_server, daemon=True).start()
@@ -73,7 +62,6 @@ class LaptopApp:
         style.configure("TLabel", background="#1e293b", foreground="#f8fafc")
         style.configure("TButton", padding=8)
         style.configure("TEntry", padding=6)
-        style.configure("TCombobox", padding=6)
 
         outer = tk.Frame(self.root, bg="#0f172a", padx=18, pady=18)
         outer.pack(fill="both", expand=True)
@@ -104,36 +92,45 @@ class LaptopApp:
         controls.grid(row=0, column=1, sticky="nsew")
         controls.columnconfigure(0, weight=1)
         tk.Label(
-            controls, text="مواصفات الشخص", font=("Segoe UI", 16, "bold"),
+            controls, text="البحث عن شخص", font=("Segoe UI", 16, "bold"),
             bg="#1e293b", fg="white"
         ).grid(row=0, column=0, sticky="e", pady=(0, 14))
 
-        self.shirt_color_var = tk.StringVar(value="أي لون")
-        self.pants_color_var = tk.StringVar(value="أي لون")
-        self._add_field(controls, 1, "لون البلوزة / القميص", ttk.Combobox(
-            controls, textvariable=self.shirt_color_var, values=list(COLORS),
-            state="readonly", justify="right"
-        ))
-        self._add_field(controls, 2, "لون البنطلون / الشورت", ttk.Combobox(
-            controls, textvariable=self.pants_color_var, values=list(COLORS),
-            state="readonly", justify="right"
-        ))
+        tk.Label(
+            controls, text="اكتب المواصفات (مثال: قميص أحمر وبنطلون أسود)",
+            bg="#1e293b", fg="#cbd5e1", anchor="e", justify="right"
+        ).grid(row=1, column=0, sticky="ew", pady=(5, 3))
+        self.description_var = tk.StringVar()
+        self.description_entry = ttk.Entry(
+            controls, textvariable=self.description_var, justify="right"
+        )
+        self.description_entry.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+
+        self.reference_label = tk.Label(
+            controls, text="لم يتم اختيار صورة مرجعية", bg="#1e293b",
+            fg="#cbd5e1", anchor="e", justify="right", wraplength=330
+        )
+        self.reference_label.grid(row=3, column=0, sticky="ew", pady=(4, 4))
+        ttk.Button(
+            controls, text="اختيار صورة الشخص (اختياري)",
+            command=self._choose_reference_image
+        ).grid(row=4, column=0, sticky="ew")
 
         self.search_button = ttk.Button(
-            controls, text="ابدأ البحث بالمواصفات", command=self._search
+            controls, text="ابدأ البحث", command=self._search
         )
         self.search_button.grid(row=5, column=0, sticky="ew", pady=(12, 8))
         self.result_label = tk.Label(
-            controls, text="أدخل اللون ثم ابدأ البحث.", bg="#111827",
+            controls, text="اكتب مواصفات واضحة أو اختر صورة للشخص.", bg="#111827",
             fg="#e2e8f0", justify="right", anchor="ne", wraplength=320,
             padx=12, pady=12
         )
         self.result_label.grid(row=6, column=0, sticky="nsew", pady=(4, 12))
         controls.rowconfigure(6, weight=1)
 
-        address = "https://{}:5000".format(get_laptop_ip())
+        address = PHONE_SITE_URL
         tk.Label(
-            controls, text="افتح هذا الرابط على الهاتف:\n" + address,
+            controls, text="افتح موقع الهاتف:\n" + address,
             bg="#1e293b", fg="#93c5fd", justify="right", wraplength=330
         ).grid(row=7, column=0, sticky="ew")
         ttk.Button(
@@ -142,27 +139,37 @@ class LaptopApp:
         ).grid(row=8, column=0, sticky="ew", pady=(8, 0))
         tk.Label(
             controls,
-            text="التطبيق يحدد لون الجزء العلوي والسفلي تلقائيًا. الطول المعروض بالبكسل من الصورة؛ لا يمكن معرفة الطول الحقيقي بالسنتيمتر دون مرجع قياس.",
+            text="عند العثور على الشخص سيظهر حوله إطار أخضر وتُكبّر صورته. الوصف النصي يدعم ألوان الملابس؛ الصورة المرجعية تساعد على المطابقة البصرية.",
             bg="#1e293b", fg="#cbd5e1", justify="right", wraplength=330
         ).grid(row=9, column=0, sticky="ew", pady=(14, 0))
-
-    @staticmethod
-    def _add_field(parent, row, label_text, widget):
-        tk.Label(
-            parent, text=label_text, bg="#1e293b", fg="#cbd5e1",
-            anchor="e", justify="right"
-        ).grid(row=row * 2 - 1, column=0, sticky="ew", pady=(5, 3))
-        widget.grid(row=row * 2, column=0, sticky="ew", pady=(0, 6))
 
     def _copy_address(self, address):
         self.root.clipboard_clear()
         self.root.clipboard_append(address)
         self.status_label.config(text="تم نسخ الرابط. افتحه على الهاتف.")
 
+    def _choose_reference_image(self):
+        image_path = filedialog.askopenfilename(
+            title="اختر صورة الشخص",
+            filetypes=[
+                ("صور", "*.jpg *.jpeg *.png *.bmp"),
+                ("كل الملفات", "*.*"),
+            ],
+        )
+        if image_path:
+            self.reference_image_path = image_path
+            self.reference_label.config(
+                text="الصورة المختارة: " + os.path.basename(image_path)
+            )
+
     def _search(self):
+        description = self.description_var.get().strip()
+        if not description and not self.reference_image_path:
+            self.result_label.config(text="اكتب مواصفات الشخص أو اختر صورة له أولًا.")
+            return
         payload = {
-            "shirt_color": COLORS[self.shirt_color_var.get()],
-            "pants_color": COLORS[self.pants_color_var.get()],
+            "description": description,
+            "reference_path": self.reference_image_path,
         }
         self.search_button.config(state="disabled")
         threading.Thread(
@@ -171,29 +178,86 @@ class LaptopApp:
 
     def _send_criteria(self, payload):
         try:
-            response = json.loads(api_request("/api/criteria", payload))
+            request_payload = {
+                "description": payload["description"],
+                "reference_image": "",
+            }
+            if payload["reference_path"]:
+                image_bytes = np.fromfile(payload["reference_path"], dtype=np.uint8)
+                image = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
+                if image is None:
+                    raise ValueError("تعذر قراءة الصورة المختارة.")
+                height, width = image.shape[:2]
+                scale = min(1.0, 640 / max(height, width))
+                if scale < 1:
+                    image = cv2.resize(
+                        image,
+                        (max(1, int(width * scale)), max(1, int(height * scale))),
+                    )
+                success, encoded = cv2.imencode(
+                    ".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 75]
+                )
+                if not success:
+                    raise ValueError("تعذر تجهيز الصورة المختارة.")
+                request_payload["reference_image"] = (
+                    "data:image/jpeg;base64,"
+                    + base64.b64encode(encoded.tobytes()).decode("ascii")
+                )
+            response = json.loads(api_request("/api/criteria", request_payload))
             self.updates.put(("criteria", response))
-        except (urllib.error.URLError, TimeoutError, ValueError) as error:
+        except urllib.error.HTTPError as error:
+            try:
+                details = json.loads(error.read()).get("error", str(error))
+            except (ValueError, UnicodeDecodeError):
+                details = str(error)
+            self.updates.put(("error", "تعذر بدء البحث: {}".format(details)))
+        except (urllib.error.URLError, TimeoutError, ValueError, cv2.error) as error:
             self.updates.put(("error", "تعذر إرسال المواصفات: {}".format(error)))
 
     def _poll_server(self):
         while not self.closed:
             try:
-                status = json.loads(api_request("/api/status"))
-                frame = api_request("/api/latest.png") if status["has_frame"] else None
-                self.updates.put(("live", status, frame))
+                req = urllib.request.Request(
+                    "{}{}?since={}".format(
+                        SERVER_URL, "/api/latest.jpg", self.last_frame_id
+                    )
+                )
+                with urllib.request.urlopen(
+                    req, context=HTTP_CONTEXT, timeout=3
+                ) as response:
+                    frame_id = int(response.headers.get("X-Frame-Id", "0"))
+                    status = {
+                        "has_frame": frame_id > 0,
+                        "frame_id": frame_id,
+                        "people_count": int(
+                            response.headers.get("X-People-Count", "0")
+                        ),
+                        "match_count": int(
+                            response.headers.get("X-Match-Count", "0")
+                        ),
+                    }
+                    frame = response.read() if response.status == 200 else None
+                if frame is not None:
+                    self.last_frame_id = frame_id
+                with self.live_update_lock:
+                    pending_update = self.latest_live_update
+                    if (
+                        frame is None
+                        and pending_update is not None
+                        and pending_update[0]["frame_id"] == frame_id
+                    ):
+                        frame = pending_update[1]
+                    self.latest_live_update = (status, frame)
             except (urllib.error.URLError, TimeoutError, urllib.error.HTTPError) as error:
                 self.updates.put(("offline", str(error)))
-            time.sleep(0.35)
+            time.sleep(0.12)
 
     def _process_updates(self):
         try:
             while True:
                 update = self.updates.get_nowait()
                 kind = update[0]
-                if kind == "live":
-                    self._show_live(update[1], update[2])
-                elif kind == "criteria":
+                if kind == "criteria":
                     self.search_button.config(state="normal")
                     self._show_matches(update[1])
                 elif kind == "error":
@@ -203,46 +267,53 @@ class LaptopApp:
                     self.status_label.config(text="الخادم غير متصل: " + update[1])
         except queue.Empty:
             pass
+        with self.live_update_lock:
+            live_update = self.latest_live_update
+            self.latest_live_update = None
+        if live_update is not None:
+            self._show_live(*live_update)
         if not self.closed:
             self.root.after(150, self._process_updates)
 
     def _show_live(self, status, frame):
-        if frame is not None and status["frame_id"] != self.last_frame_id:
+        if frame is not None and status["frame_id"] != self.displayed_frame_id:
             try:
-                image = tk.PhotoImage(data=base64.b64encode(frame).decode("ascii"))
+                decoded = cv2.imdecode(
+                    np.frombuffer(frame, dtype=np.uint8), cv2.IMREAD_COLOR
+                )
+                if decoded is None:
+                    raise ValueError("تعذر فك ترميز صورة البث.")
+                success, png = cv2.imencode(".png", decoded)
+                if not success:
+                    raise ValueError("تعذر فك ترميز صورة البث.")
+                image = tk.PhotoImage(
+                    data=base64.b64encode(png.tobytes()).decode("ascii")
+                )
                 self.image_label.config(image=image, text="")
                 self.image_label.image = image
-                self.last_frame_id = status["frame_id"]
-            except tk.TclError as error:
+                self.displayed_frame_id = status["frame_id"]
+            except (tk.TclError, ValueError, cv2.error) as error:
                 self.status_label.config(text="تعذر عرض الصورة: " + str(error))
         if status["has_frame"]:
-            self.status_label.config(
-                text="متصل | الأشخاص المكتشفة: {}".format(len(status["people"]))
-            )
+            count = status["people_count"]
+            matches = status["match_count"]
+            if matches:
+                message = "تم العثور على {} شخص مطابق؛ تم تكبير الهدف.".format(matches)
+            elif count and self.search_active:
+                message = "تم اكتشاف {} أشخاص؛ لم يظهر تطابق بعد.".format(count)
+            elif count:
+                message = "تم اكتشاف أشخاص؛ أدخل المواصفات لبدء البحث."
+            else:
+                message = "جارٍ البحث عن الشخص في البث..."
+            self.status_label.config(text=message)
         else:
             self.status_label.config(text="الخادم جاهز؛ افتح الموقع على الهاتف وابدأ الكاميرا.")
 
     def _show_matches(self, response):
-        matches = response["matches"]
-        if not response["people"]:
-            text = "لا يوجد شخص ظاهر في بث الهاتف الآن."
-        elif matches:
-            details = []
-            for index, person in enumerate(matches, start=1):
-                details.append(
-                    "الشخص {}: البلوزة {}، البنطلون {}، طول الصورة {} بكسل".format(
-                        index,
-                        person["shirt_color_ar"],
-                        person["pants_color_ar"],
-                        person["height_px"],
-                    )
-                )
-            text = "تم العثور على {} شخص مطابق للمواصفات:\n".format(len(matches))
-            text += "\n".join(details)
-        else:
-            text = "تم اكتشاف أشخاص، لكن ألوان البلوزة والبنطلون لا تطابق المواصفات."
-        text += "\n\nالطول بالبكسل من الصورة، وليس بالسنتيمتر."
-        self.result_label.config(text=text)
+        self.search_active = True
+        self.result_label.config(
+            text="بدأ البحث. سيظهر الإطار الأخضر والتكبير عند العثور على تطابق."
+        )
 
     def _close(self):
         self.closed = True
@@ -250,8 +321,9 @@ class LaptopApp:
 
 
 if __name__ == "__main__":
-    if SERVER_URL == "https://127.0.0.1:5000":
+    if SERVER_URL == LOCAL_SERVER_URL:
         threading.Thread(target=start_server, daemon=True).start()
     root = tk.Tk()
     LaptopApp(root)
     root.mainloop()
+
