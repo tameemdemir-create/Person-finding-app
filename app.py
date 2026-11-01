@@ -20,6 +20,13 @@ SERVER_URL = os.environ.get(
 ).rstrip("/")
 HTTP_CONTEXT = ssl._create_unverified_context()
 PHONE_SITE_URL = "https://tameemdemir-create.github.io/Person-finding-app/"
+BLACK = "#030704"
+SURFACE = "#0a120c"
+PANEL = "#0d190f"
+GREEN = "#39f27a"
+SOFT_GREEN = "#b5f7c8"
+MUTED_GREEN = "#6eae80"
+BORDER_GREEN = "#1c6736"
 
 
 def api_request(path, payload=None):
@@ -39,9 +46,9 @@ class LaptopApp:
     def __init__(self, root):
         self.root = root
         self.root.title("تطبيق البحث عن الشخص")
-        self.root.geometry("1150x760")
-        self.root.minsize(900, 650)
-        self.root.configure(bg="#0f172a")
+        self.root.geometry("1220x800")
+        self.root.minsize(940, 680)
+        self.root.configure(bg=BLACK)
         self.updates = queue.Queue()
         self.closed = False
         self.last_frame_id = 0
@@ -59,46 +66,90 @@ class LaptopApp:
     def _build_ui(self):
         style = ttk.Style()
         style.theme_use("clam")
-        style.configure("TLabel", background="#1e293b", foreground="#f8fafc")
-        style.configure("TButton", padding=8)
-        style.configure("TEntry", padding=6)
+        style.configure(
+            "TButton", padding=10, background=PANEL, foreground=GREEN,
+            bordercolor=BORDER_GREEN, lightcolor=BORDER_GREEN,
+            darkcolor=BLACK, font=("Segoe UI", 10, "bold")
+        )
+        style.map(
+            "TButton",
+            background=[("active", BORDER_GREEN), ("disabled", SURFACE)],
+            foreground=[("disabled", MUTED_GREEN)]
+        )
+        style.configure(
+            "Accent.TButton", padding=12, background=GREEN, foreground=BLACK,
+            bordercolor=GREEN, lightcolor=GREEN, darkcolor=BORDER_GREEN,
+            font=("Segoe UI", 11, "bold")
+        )
+        style.map(
+            "Accent.TButton",
+            background=[("active", SOFT_GREEN), ("disabled", BORDER_GREEN)],
+            foreground=[("disabled", MUTED_GREEN)]
+        )
+        style.configure(
+            "TEntry", padding=9, fieldbackground=BLACK, foreground=SOFT_GREEN,
+            insertcolor=GREEN, bordercolor=BORDER_GREEN
+        )
 
-        outer = tk.Frame(self.root, bg="#0f172a", padx=18, pady=18)
+        outer = tk.Frame(self.root, bg=BLACK, padx=22, pady=20)
         outer.pack(fill="both", expand=True)
         outer.columnconfigure(0, weight=3)
         outer.columnconfigure(1, weight=2)
-        outer.rowconfigure(0, weight=1)
+        outer.rowconfigure(1, weight=1)
 
-        video_panel = tk.Frame(outer, bg="#1e293b", padx=12, pady=12)
-        video_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        header = tk.Frame(outer, bg=BLACK, pady=8)
+        header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 16))
+        header.columnconfigure(0, weight=1)
+        tk.Label(
+            header, text="نظام تتبّع الأشخاص", bg=BLACK, fg=GREEN,
+            font=("Segoe UI", 23, "bold"), anchor="e"
+        ).grid(row=0, column=1, sticky="e")
+        tk.Label(
+            header,
+            text="رؤية مباشرة  /  كاميرا ذكية  /  بحث دقيق",
+            bg=BLACK, fg=MUTED_GREEN, font=("Segoe UI", 10), anchor="e"
+        ).grid(row=1, column=1, sticky="e", pady=(4, 0))
+        tk.Label(
+            header, text="●  LIVE SYSTEM", bg=SURFACE, fg=GREEN,
+            font=("Segoe UI", 9, "bold"), padx=12, pady=7
+        ).grid(row=0, column=0, rowspan=2, sticky="w")
+
+        video_panel = tk.Frame(
+            outer, bg=PANEL, padx=15, pady=15, highlightthickness=1,
+            highlightbackground=BORDER_GREEN
+        )
+        video_panel.grid(row=1, column=0, sticky="nsew", padx=(0, 12))
         video_panel.rowconfigure(1, weight=1)
         video_panel.columnconfigure(0, weight=1)
         tk.Label(
-            video_panel, text="بث كاميرا الهاتف", font=("Segoe UI", 16, "bold"),
-            bg="#1e293b", fg="white"
-        ).grid(row=0, column=0, sticky="w", pady=(0, 10))
+            video_panel, text="البث الحي", font=("Segoe UI", 15, "bold"),
+            bg=PANEL, fg=SOFT_GREEN
+        ).grid(row=0, column=0, sticky="e", pady=(0, 10))
         self.image_label = tk.Label(
-            video_panel, text="بانتظار اتصال الهاتف...", bg="#020617",
-            fg="#cbd5e1", font=("Segoe UI", 13), compound="center"
+            video_panel, text="بانتظار اتصال الهاتف...", bg=BLACK,
+            fg=MUTED_GREEN, font=("Segoe UI", 13), compound="center"
         )
         self.image_label.grid(row=1, column=0, sticky="nsew")
         self.status_label = tk.Label(
-            video_panel, text="الخادم يبدأ...", bg="#1e293b", fg="#a7f3d0",
-            anchor="w", justify="right"
+            video_panel, text="الخادم يبدأ...", bg=PANEL, fg=GREEN,
+            anchor="e", justify="right", font=("Segoe UI", 10)
         )
         self.status_label.grid(row=2, column=0, sticky="ew", pady=(10, 0))
 
-        controls = tk.Frame(outer, bg="#1e293b", padx=16, pady=16)
-        controls.grid(row=0, column=1, sticky="nsew")
+        controls = tk.Frame(
+            outer, bg=PANEL, padx=18, pady=18, highlightthickness=1,
+            highlightbackground=BORDER_GREEN
+        )
+        controls.grid(row=1, column=1, sticky="nsew")
         controls.columnconfigure(0, weight=1)
         tk.Label(
-            controls, text="البحث عن شخص", font=("Segoe UI", 16, "bold"),
-            bg="#1e293b", fg="white"
+            controls, text="بحث ذكي عن شخص", font=("Segoe UI", 16, "bold"),
+            bg=PANEL, fg=GREEN
         ).grid(row=0, column=0, sticky="e", pady=(0, 14))
 
         tk.Label(
             controls, text="اكتب المواصفات (مثال: قميص أحمر وبنطلون أسود)",
-            bg="#1e293b", fg="#cbd5e1", anchor="e", justify="right"
+            bg=PANEL, fg=SOFT_GREEN, anchor="e", justify="right"
         ).grid(row=1, column=0, sticky="ew", pady=(5, 3))
         self.description_var = tk.StringVar()
         self.description_entry = ttk.Entry(
@@ -107,8 +158,8 @@ class LaptopApp:
         self.description_entry.grid(row=2, column=0, sticky="ew", pady=(0, 8))
 
         self.reference_label = tk.Label(
-            controls, text="لم يتم اختيار صورة مرجعية", bg="#1e293b",
-            fg="#cbd5e1", anchor="e", justify="right", wraplength=330
+            controls, text="لم يتم اختيار صورة مرجعية", bg=PANEL,
+            fg=MUTED_GREEN, anchor="e", justify="right", wraplength=330
         )
         self.reference_label.grid(row=3, column=0, sticky="ew", pady=(4, 4))
         ttk.Button(
@@ -117,12 +168,13 @@ class LaptopApp:
         ).grid(row=4, column=0, sticky="ew")
 
         self.search_button = ttk.Button(
-            controls, text="ابدأ البحث", command=self._search
+            controls, text="ابدأ البحث", command=self._search,
+            style="Accent.TButton"
         )
         self.search_button.grid(row=5, column=0, sticky="ew", pady=(12, 8))
         self.result_label = tk.Label(
-            controls, text="اكتب مواصفات واضحة أو اختر صورة للشخص.", bg="#111827",
-            fg="#e2e8f0", justify="right", anchor="ne", wraplength=320,
+            controls, text="اكتب مواصفات واضحة أو اختر صورة للشخص.", bg=BLACK,
+            fg=SOFT_GREEN, justify="right", anchor="ne", wraplength=320,
             padx=12, pady=12
         )
         self.result_label.grid(row=6, column=0, sticky="nsew", pady=(4, 12))
@@ -131,7 +183,7 @@ class LaptopApp:
         address = PHONE_SITE_URL
         tk.Label(
             controls, text="افتح موقع الهاتف:\n" + address,
-            bg="#1e293b", fg="#93c5fd", justify="right", wraplength=330
+            bg=PANEL, fg=GREEN, justify="right", wraplength=330
         ).grid(row=7, column=0, sticky="ew")
         ttk.Button(
             controls, text="نسخ رابط الهاتف",
@@ -139,8 +191,8 @@ class LaptopApp:
         ).grid(row=8, column=0, sticky="ew", pady=(8, 0))
         tk.Label(
             controls,
-            text="عند العثور على الشخص سيظهر حوله إطار أخضر وتُكبّر صورته. الوصف النصي يدعم ألوان الملابس؛ الصورة المرجعية تساعد على المطابقة البصرية.",
-            bg="#1e293b", fg="#cbd5e1", justify="right", wraplength=330
+            text="تظهر إطارات خضراء حول الأشخاص المكتشفين، ويتحول إطار الشخص المطابق إلى الأحمر مع تكبيره.",
+            bg=PANEL, fg=MUTED_GREEN, justify="right", wraplength=330
         ).grid(row=9, column=0, sticky="ew", pady=(14, 0))
 
     def _copy_address(self, address):
@@ -312,7 +364,7 @@ class LaptopApp:
     def _show_matches(self, response):
         self.search_active = True
         self.result_label.config(
-            text="بدأ البحث. سيظهر الإطار الأخضر والتكبير عند العثور على تطابق."
+            text="بدأ البحث. الأشخاص بإطار أخضر، والهدف المطابق بإطار أحمر مع تكبيره."
         )
 
     def _close(self):
